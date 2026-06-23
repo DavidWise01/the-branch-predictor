@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>The Branch Predictor — the trained guess that handles your every if</title>
+<meta name="description" content="The perceptron branch predictor (Jiménez & Lin, 2001) put a literal neuron in silicon to guess your if-statements before they resolve. Lineage from static prediction → Smith's 2-bit counter → two-level adaptive → gshare → tournament → perceptron → TAGE → modern hybrids. A live perceptron that learns to predict a branch (and fails on random — the Shannon floor). Plus: is it prefetch? (no — its sibling) and do you only reach it through the wrapper? (yes). David Lee Wise, two-layer honest.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='7' fill='%237fe7ff'/%3E%3Cpath d='M10 16 L25 30 M10 32 L25 32 M10 48 L25 34 M39 32 L54 20 M39 32 L54 44' stroke='%23e6b04e' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,wght@9..144,0,400;9..144,0,500;9..144,1,500&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{--ground:#150e21;--ground-2:#1d1430;--surface:#241836;--edge:#3a2a58;
+    --ink:#ece1f7;--ink-soft:#c3b3da;--ink-mute:#8c7aa6;--violet:#b98bff;
+    --wave:#7fe7ff;--value:#5eead4;--weight:#e6b04e;--miss:#ff7a92;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:radial-gradient(1000px 680px at 50% -8%,rgba(127,231,255,.10),transparent 56%),
+    radial-gradient(900px 620px at 6% 12%,rgba(120,60,180,.16),transparent 55%),var(--ground);
+    color:var(--ink);font-family:"Space Grotesk",system-ui,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:980px;margin:0 auto;padding:56px 24px 72px;}
+  .bar{font-family:"JetBrains Mono",monospace;font-size:11.5px;margin-bottom:14px;}
+  .bar a{color:var(--wave);text-decoration:none;border-bottom:1px dotted #5a85b0;} .bar a:hover{color:#fff;}
+  .eyebrow{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--weight);margin-bottom:16px;}
+  h1{font-family:"Fraunces",serif;font-weight:500;font-size:clamp(38px,6.6vw,72px);line-height:.98;letter-spacing:-.02em;}
+  h1 em{font-style:italic;color:var(--wave);}
+  .thesis{margin-top:18px;max-width:65ch;font-size:17.5px;color:var(--ink-soft);}
+  .thesis em{font-style:italic;color:var(--wave);} .thesis b{color:var(--ink);font-weight:600;}
+  .eq{font-family:"JetBrains Mono",monospace;font-size:clamp(13px,2.3vw,17px);margin-top:18px;color:var(--ink);
+    border:1px solid var(--edge);border-radius:10px;padding:12px 16px;background:rgba(0,0,0,.16);display:inline-block;}
+  .eq b{color:var(--wave);} .eq .w{color:var(--weight);} .eq .v{color:var(--value);}
+  h2.sec{font-family:"Fraunces",serif;font-weight:500;font-size:clamp(23px,3.4vw,32px);margin:46px 0 4px;}
+  .sub{font-size:15.5px;font-weight:300;line-height:1.6;max-width:860px;margin:6px 0 14px;color:var(--ink-soft);} .sub b{color:var(--ink);font-weight:600;} .sub a{color:var(--wave);}
+  .qa{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px;}
+  @media(max-width:720px){.qa{grid-template-columns:1fr;}}
+  .q{border:1px solid var(--edge);border-radius:14px;padding:17px 19px;background:rgba(0,0,0,.14);border-left:3px solid var(--violet);}
+  .q h3{font-family:"JetBrains Mono",monospace;font-size:12.5px;letter-spacing:.02em;color:var(--violet);margin-bottom:8px;}
+  .q .a{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--wave);margin-bottom:6px;font-weight:700;}
+  .q p{font-size:13.5px;color:var(--ink-soft);line-height:1.5;} .q p b{color:var(--ink);font-weight:500;}
+  .stage{margin-top:14px;border:1px solid var(--edge);border-radius:16px;overflow:hidden;background:linear-gradient(180deg,var(--surface),var(--ground-2));}
+  .stage canvas{display:block;width:100%;height:auto;}
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 18px;border-top:1px solid var(--edge);
+    font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink-soft);}
+  .controls button{font-family:"JetBrains Mono",monospace;font-size:12px;cursor:pointer;color:var(--ink);
+    background:rgba(127,231,255,.12);border:1px solid rgba(127,231,255,.4);border-radius:7px;padding:5px 11px;}
+  .controls button:hover{background:rgba(127,231,255,.28);} .controls button.on{background:rgba(185,139,255,.3);border-color:var(--violet);}
+  .controls .sp{margin-left:auto;color:var(--ink-mute);}
+  .line{margin-top:14px;border-left:2px solid var(--edge);padding-left:0;}
+  .step{position:relative;padding:12px 0 12px 26px;border-left:2px solid var(--edge);margin-left:6px;}
+  .step::before{content:"";position:absolute;left:-7px;top:18px;width:12px;height:12px;border-radius:50%;background:var(--ground);border:2px solid var(--wave);}
+  .step.hero::before{background:var(--weight);border-color:var(--weight);width:15px;height:15px;left:-8.5px;box-shadow:0 0 12px var(--weight);}
+  .step .yr{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--weight);letter-spacing:.05em;}
+  .step h4{font-family:"Space Grotesk",sans-serif;font-size:16px;font-weight:600;margin:2px 0 4px;color:var(--ink);}
+  .step.hero h4{color:var(--weight);} .step p{font-size:13.5px;color:var(--ink-soft);line-height:1.5;max-width:80ch;} .step p b{color:var(--ink);font-weight:500;}
+  .stack{font-family:"JetBrains Mono",monospace;font-size:12.5px;border:1px solid var(--edge);border-radius:12px;overflow:hidden;margin-top:12px;}
+  .stack .row{padding:9px 14px;border-bottom:1px solid var(--edge);display:flex;gap:12px;align-items:baseline;background:rgba(0,0,0,.10);}
+  .stack .row:last-child{border-bottom:none;} .stack .lv{color:var(--weight);min-width:108px;} .stack .ds{color:var(--ink-soft);} .stack .ds b{color:var(--wave);font-weight:700;}
+  footer{margin-top:46px;padding:30px 0 0;border-top:1px solid var(--edge);color:var(--ink-mute);font-size:13px;max-width:84ch;}
+  footer b{color:var(--ink-soft);font-weight:500;} footer em{color:var(--wave);font-style:normal;} footer a{color:var(--wave);}
+  .sig{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin-top:18px;color:var(--violet);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"><a href="https://davidwise01.github.io/ud0/">◄ UD0</a> &nbsp; <a href="https://davidwise01.github.io/the-gather/">the gather (perceptron = a gather)</a> &nbsp; <a href="https://davidwise01.github.io/the-rhythm-section/">the clock / pipeline</a> &nbsp; <a href="https://davidwise01.github.io/ttu1/">→ the transformer</a></div>
+  <div class="eyebrow">PSĒPHOS · microarchitecture · the trained guess</div>
+  <h1>The branch <em>predictor</em></h1>
+  <p class="thesis">Every <code style="color:var(--wave)">if</code> you write is <em>guessed before it's known</em>. The pipeline can't wait ~15 cycles to learn which way a branch goes, so a tiny learner in the chip bets on it and runs ahead speculatively. In 2001 that learner became <b>a literal neuron</b> — the <em>perceptron predictor</em>: history bits in, learned weights, one fired bit out. It's the same weighted sum as attention — <em>a gather</em> — and it's been quietly running your code for twenty years.</p>
+  <div class="eq">predict = sign( <span class="w">w₀</span> + Σ <span class="w">wᵢ</span>·<b>xᵢ</b> )&nbsp;&nbsp;·&nbsp;&nbsp;<b>xᵢ</b> = last branches as ±1&nbsp;&nbsp;·&nbsp;&nbsp;learn: <span class="w">wᵢ</span> += <b>actual</b>·<b>xᵢ</b></div>
+
+  <h2 class="sec">your two questions, straight</h2>
+  <div class="qa">
+    <div class="q"><h3>is it prefetch?</h3><div class="a">No — its sibling. Both are speculation.</div><p><b>Branch prediction guesses control</b> — which way the <code>if</code> goes — so the front-end keeps fetching the right instructions. <b>Prefetch guesses data</b> — which memory addresses you'll touch — so the bytes are in cache before you ask. Different target (the branch vs the address), same trick (bet on the future to avoid stalling). And tellingly, <b>prefetch went perceptron too</b> (perceptron prefetch filtering, 2019) — the same neuron now guesses both.</p></div>
+    <div class="q"><h3>do I only reach it through a wrapper?</h3><div class="a">Yes — it's deliberately invisible.</div><p>You <b>never address it directly</b>. Your <code>if</code> → the compiler emits <code>cmp; jne</code> → the CPU front-end, seeing that jump, <b>auto-consults the predictor</b> — no instruction says "predict this." The smoke &amp; mirrors is <b>speculation + rollback</b>: it runs down the guessed path, and if wrong, flushes and rewinds — so architecturally it's <em>as if</em> your <code>if</code> ran in order, just faster. You can only <b>nudge</b> it (<code>__builtin_expect</code>, profile-guided opt), never command it.</p></div>
+  </div>
+
+  <h2 class="sec">1 · watch the neuron learn your branch</h2>
+  <p class="sub">A real perceptron predictor, training live on a branch pattern. It reads the <b style="color:var(--wave)">history</b> (last 8 outcomes as ±1), takes a <b style="color:var(--weight)">weighted sum</b> (a gather), fires a <b>taken / not-taken</b> guess, then nudges its weights toward the truth. Patterns it can separate, it nails to ~100%. Pick <b style="color:var(--miss)">RANDOM</b> and watch it die at 50% — the Shannon floor, where no predictor beats a coin. <i>(Weights are real; toy 8-bit history.)</i></p>
+  <div class="stage">
+    <canvas id="cv" width="940" height="430" aria-label="A perceptron branch predictor learning live"></canvas>
+    <div class="controls">
+      <span style="color:var(--ink-mute)">pattern:</span>
+      <button class="pat on" data-p="loop">loop · TTTTN</button>
+      <button class="pat" data-p="alt">alternate · TNTN</button>
+      <button class="pat" data-p="block">block · period-7</button>
+      <button class="pat" data-p="rand">RANDOM</button>
+      <button id="reset">↺ reset weights</button>
+      <span class="sp" id="acc"></span>
+    </div>
+  </div>
+
+  <h2 class="sec">2 · static dirt to a neuron — the lineage</h2>
+  <p class="sub">Forty years of getting better at one bet: <b>which way does this branch go?</b> Each step remembered more, and aliased less.</p>
+  <div class="line">
+    <div class="step"><div class="yr">≤ 1980 · STATIC</div><h4>Always-taken / backward-taken-forward-not</h4><p>No memory at all. The compiler or a fixed rule guesses; loops (backward branches) are bet taken. ~60–70% right. The dumb heuristic.</p></div>
+    <div class="step"><div class="yr">1981 · SMITH</div><h4>The 2-bit saturating counter (bimodal)</h4><p>One little counter per branch — <b>remembers the recent lean</b>, needs two misses to flip. First <em>learned</em> predictor. ~85–90%. Still in every chip as a baseline.</p></div>
+    <div class="step"><div class="yr">1991 · YEH &amp; PATT</div><h4>Two-level adaptive — history × pattern table</h4><p>A <b>history register</b> of recent outcomes indexes a table of counters. Now it learns <em>patterns</em> (TTNTTN…), not just bias. The leap from "which way usually" to "which way given the last few."</p></div>
+    <div class="step"><div class="yr">1993 · McFARLING</div><h4>gshare — hash the history with the address</h4><p>XOR the global history with the branch's PC to index the table — <b>spreads collisions out</b>, so unrelated branches stop clobbering each other. Cheap, strong, everywhere.</p></div>
+    <div class="step"><div class="yr">1996 · TOURNAMENT</div><h4>Hybrid meta-prediction (Alpha 21264)</h4><p>Run a <b>local</b> and a <b>global</b> predictor, plus a third that <em>predicts which one to trust</em> for this branch. Different branches have different personalities; pick the right expert.</p></div>
+    <div class="step hero"><div class="yr">2001 · JIMÉNEZ &amp; LIN</div><h4>The perceptron predictor — a neuron in silicon</h4><p><b>One perceptron per branch.</b> History bits as ±1 inputs, signed integer weights, predict by the sign of the weighted sum; train with the perceptron rule. The breakthrough: cost scales <b>linearly</b> with history length, where counter tables blow up <b>exponentially</b> — so it can see <em>long</em> correlations (a branch tied to one 40 back). A real neural net, clocked at GHz. AMD ships descendants of it today.</p></div>
+    <div class="step"><div class="yr">2006 · SEZNEC</div><h4>TAGE — tagged, geometric history lengths</h4><p>Several tagged tables indexed by <b>geometrically growing</b> history lengths (2, 4, 8, 16, 64…); the longest matching tag wins. Highest raw accuracy known; the perennial championship winner.</p></div>
+    <div class="step"><div class="yr">now · HYBRIDS</div><h4>TAGE-SC-L &amp; hashed perceptron (Zen, Intel)</h4><p>Real cores run <b>both</b>: TAGE for the pattern match, a <b>perceptron-style Statistical Corrector</b> to override it when it's been wrong. ~99% on real code. The neuron and the geometric table, fused.</p></div>
+  </div>
+
+  <h2 class="sec">3 · why it's a gather (and where it breaks)</h2>
+  <p class="sub">Look at the rule again: <code style="color:var(--wave)">y = Σ wᵢ·xᵢ</code>. That's a <b>weighted sum over the history</b> — attend to past branches, weight each by a learned strength, combine into one decision. <b>The same gather as attention</b> (<a href="https://davidwise01.github.io/the-gather/">the gather ↗</a>) — a branch predictor is a one-neuron attention head over time. But one perceptron is a <b>linear</b> classifier, so it has the famous blind spot: it <b>cannot learn XOR</b> (a branch taken only when two history bits <em>disagree</em>) — that's linearly inseparable. That single limitation is the whole reason TAGE, piecewise-linear, and hashed-perceptron hybrids exist: to catch the patterns one straight cut can't.</p>
+
+  <h2 class="sec">4 · the smoke &amp; mirrors — from your if to the bet</h2>
+  <p class="sub">The full wrapper stack, top to bottom. You touch the top; the predictor lives at the bottom and never shows its face.</p>
+  <div class="stack">
+    <div class="row"><span class="lv">you write</span><span class="ds"><b>if (x &gt; 0) { … }</b> — a logical fork in your story</span></div>
+    <div class="row"><span class="lv">compiler</span><span class="ds">emits <b>cmp x,0 ; jle else</b> — a conditional branch instruction (the ISA's "if")</span></div>
+    <div class="row"><span class="lv">front-end</span><span class="ds">sees the <b>jle</b>'s address, <b>auto-consults the predictor</b> — no opcode asked it to</span></div>
+    <div class="row"><span class="lv">predictor</span><span class="ds">perceptron fires <b>taken / not-taken</b> in ~1 cycle, before <code>x</code> is even compared</span></div>
+    <div class="row"><span class="lv">speculate</span><span class="ds">the pipeline runs <b>down the guessed path</b> — dozens of instructions deep, all provisional</span></div>
+    <div class="row"><span class="lv">resolve</span><span class="ds">cycles later the real <code>cmp</code> finishes — <b>was the guess right?</b></span></div>
+    <div class="row"><span class="lv">commit / flush</span><span class="ds">right → <b>keep it, you never knew</b>. wrong → <b>flush + rewind ~15 cycles</b>, take the other path, and <em>train the weights</em></span></div>
+  </div>
+  <p class="sub">So yes — it <b>is</b> the early-guess half of your <code>if</code>-handler, and you reach it <b>only</b> through that stack. The "mirrors" is that a correct guess is <em>invisible</em> (results as if run in order) and a wrong one is <em>erased</em> (rolled back) — the speculation never leaks into your program's logic, only into its speed.</p>
+
+  <footer>
+    <p><b>Gate kept on.</b> The <em>perceptron predictor is real silicon</em> — Jiménez &amp; Lin, HPCA 2001; AMD's cores use hashed-perceptron descendants; the live demo runs the actual perceptron learning rule (verified: ~100% on separable patterns, ~50% on random — the real Shannon floor; the 8-bit history is a toy size, the mechanism is exact). <em>Branch prediction ≠ prefetch</em> is the real distinction (control vs data speculation), and both genuinely adopted perceptrons. The <em>"you only reach it through a wrapper"</em> framing is accurate — branch prediction is architecturally invisible by design (speculation is transparent: correct-as-if-in-order, mispredicts rolled back). <em>The perceptron = a gather</em> and the <em>XOR blind spot</em> are exact (a single perceptron is a linear classifier). The lineage dates and names are real history. Ties [[the-gather]] (the weighted sum) to [[ttu1]] (the neuron grown up) and [[the-rhythm-section]] (the pipeline it feeds).</p>
+    <div class="sig">PSĒPHOS · the branch predictor · the trained guess of the if · governor David Lee Wise · CC-BY-ND-4.0</div>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var cv=document.getElementById("cv"), g=cv.getContext("2d"), W=cv.width, H=cv.height;
+  var HL=8, theta=Math.floor(1.93*HL+14);
+  var w=new Array(HL+1).fill(0), hist=new Array(HL).fill(-1);
+  var step=0, total=0, correct=0, recentArr=[], pat="loop", seed=99;
+  var last={pred:0,actual:0,y:0,hit:true};
+  function rnd(){ seed=(seed*1103515245+12345)>>>0; return seed/4294967296; }
+  function patt(s){ if(pat==="loop") return (s%5)===4?-1:1; if(pat==="alt") return (s%2)===0?1:-1;
+    if(pat==="block") return ((s%7)<3)?1:-1; return rnd()<0.5?1:-1; }
+  function reset(){ w=new Array(HL+1).fill(0); hist=new Array(HL).fill(-1); step=0; total=0; correct=0; recentArr=[]; seed=99; }
+  var COL={bg:"#150e21",ink:"#ece1f7",mut:"#8c7aa6",wave:"#7fe7ff",violet:"#b98bff",value:"#5eead4",weight:"#e6b04e",miss:"#ff7a92"};
+  function T(s,x,y,c,f,al,ba){ g.fillStyle=c; g.font=f; g.textAlign=al||"left"; g.textBaseline=ba||"alphabetic"; g.fillText(s,x,y); }
+
+  function tick(){
+    var actual=patt(step);
+    var y=w[0]; for(var i=0;i<HL;i++) y+=w[i+1]*hist[i];
+    var pred=y>=0?1:-1, hit=(pred===actual);
+    total++; if(hit) correct++;
+    recentArr.push(hit?1:0); if(recentArr.length>60) recentArr.shift();
+    // perceptron training
+    if(pred!==actual || Math.abs(y)<=theta){ w[0]+=actual; for(i=0;i<HL;i++) w[i+1]+=actual*hist[i]; }
+    hist.unshift(actual); hist.pop();
+    last={pred:pred,actual:actual,y:y,hit:hit};
+    step++;
+  }
+
+  var fc=0;
+  function draw(){
+    g.fillStyle=COL.bg; g.fillRect(0,0,W,H);
+    if(fc%9===0) tick(); fc++;
+    var cx=30;
+    // --- history register ---
+    T("HISTORY  (last 8 branches, ±1)", cx, 34, COL.wave, "12px 'JetBrains Mono',monospace");
+    for(var i=0;i<HL;i++){ var hx=cx+i*52, taken=hist[i]>0;
+      g.fillStyle=taken?"rgba(127,231,255,0.18)":"rgba(255,122,146,0.16)";
+      g.fillRect(hx,44,44,40); g.strokeStyle=taken?COL.wave:COL.miss; g.lineWidth=1.2; g.strokeRect(hx,44,44,40);
+      T(taken?"T":"N", hx+22, 70, taken?COL.wave:COL.miss, "bold 17px 'Space Mono',monospace","center");
+      T(taken?"+1":"−1", hx+22, 98, COL.mut, "10px 'JetBrains Mono',monospace","center");
+    }
+    // --- weights ---
+    T("WEIGHTS  (learned · w₀ = bias)", cx, 142, COL.weight, "12px 'JetBrains Mono',monospace");
+    var baseY=210, maxW=Math.max(8, Math.max.apply(null,w.map(Math.abs)));
+    for(i=0;i<=HL;i++){ var wx=cx+i*52, val=w[i], bh=38*val/maxW;
+      g.fillStyle=COL.weight; g.globalAlpha=0.85; g.fillRect(wx+8, baseY-(bh>0?bh:0), 28, Math.abs(bh)); g.globalAlpha=1;
+      g.strokeStyle="rgba(58,42,88,0.8)"; g.beginPath(); g.moveTo(wx,baseY); g.lineTo(wx+44,baseY); g.stroke();
+      T((val>0?"+":"")+val, wx+22, baseY+16, COL.mut, "10px 'JetBrains Mono',monospace","center");
+      T(i===0?"b":(""+i), wx+22, 156, COL.ink, "10px 'JetBrains Mono',monospace","center");
+    }
+    // --- the gather: y = Σ w·x ---
+    var gy=270;
+    T("y = w₀ + Σ wᵢ·xᵢ   =   "+last.y, cx, gy, COL.ink, "bold 15px 'JetBrains Mono',monospace");
+    T("(the weighted sum — a gather over time)", cx, gy+20, COL.mut, "11px 'JetBrains Mono',monospace");
+    // --- decision ---
+    var dy=320, predTaken=last.pred>0, actTaken=last.actual>0;
+    T("PREDICT", cx, dy, COL.mut, "11px 'JetBrains Mono',monospace");
+    g.fillStyle=predTaken?"rgba(127,231,255,0.2)":"rgba(255,122,146,0.18)"; g.fillRect(cx+78,dy-16,92,26);
+    T(predTaken?"TAKEN":"NOT", cx+124, dy+2, predTaken?COL.wave:COL.miss, "bold 14px 'Space Mono',monospace","center");
+    T("ACTUAL", cx+200, dy, COL.mut, "11px 'JetBrains Mono',monospace");
+    g.fillStyle=actTaken?"rgba(127,231,255,0.2)":"rgba(255,122,146,0.18)"; g.fillRect(cx+272,dy-16,92,26);
+    T(actTaken?"TAKEN":"NOT", cx+318, dy+2, actTaken?COL.wave:COL.miss, "bold 14px 'Space Mono',monospace","center");
+    g.fillStyle=last.hit?COL.value:COL.miss; T(last.hit?"✓ HIT":"✗ MISS → train", cx+390, dy+2, last.hit?COL.value:COL.miss, "bold 14px 'JetBrains Mono',monospace");
+    // --- accuracy ---
+    var rec=recentArr.length?recentArr.reduce(function(a,b){return a+b;},0)/recentArr.length:0;
+    var ov=total?correct/total:0;
+    T("accuracy (last 60): "+(rec*100).toFixed(0)+"%     overall: "+(ov*100).toFixed(0)+"%     branches seen: "+total, cx, 372, COL.ink, "12px 'JetBrains Mono',monospace");
+    // accuracy bar
+    g.fillStyle="rgba(255,255,255,0.06)"; g.fillRect(cx,384,580,12);
+    g.fillStyle=rec>0.85?COL.value:(rec>0.6?COL.weight:COL.miss); g.fillRect(cx,384,580*rec,12);
+    g.strokeStyle="rgba(255,255,255,0.15)"; g.lineWidth=1; g.beginPath(); g.moveTo(cx+580*0.5,382); g.lineTo(cx+580*0.5,398); g.stroke();
+    T("50% (coin)", cx+580*0.5+4, 410, COL.mut, "9px 'JetBrains Mono',monospace");
+    // right-side label
+    var msg = pat==="rand" ? "RANDOM → no learning beats the coin (Shannon floor)" : "separable → the neuron locks on";
+    T(msg, W-30, 34, pat==="rand"?COL.miss:COL.value, "12px 'JetBrains Mono',monospace","right");
+    document.getElementById("acc").textContent=(rec*100).toFixed(0)+"% recent";
+    requestAnimationFrame(draw);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll(".pat"),function(b){ b.onclick=function(){
+    Array.prototype.forEach.call(document.querySelectorAll(".pat"),function(x){x.classList.remove("on");});
+    b.classList.add("on"); pat=b.getAttribute("data-p"); reset(); }; });
+  document.getElementById("reset").onclick=reset;
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
